@@ -1,0 +1,5 @@
+node_modules/
+dist/
+example-output/
+.verify-output/
+*.log
