@@ -6,6 +6,8 @@ import ts from "typescript";
 import { convertLua } from "./converter.js";
 import { RUNTIME_FILE_NAME, RUNTIME_SOURCE } from "./runtime-source.js";
 import type { ConversionMode, Diagnostic } from "./types.js";
+import { runAnalysis } from "./analysis-cli.js";
+import { runQuery } from "./query-cli.js";
 
 interface CliOptions {
   input?: string;
@@ -22,6 +24,12 @@ function usage(): string {
 Usage:
   lua2ts <file.lua> [-o file.ts] [--mode syntax|compatible]
   lua2ts <directory> [-o output-directory] [--mode syntax|compatible]
+  lua2ts analyze <directory> [--db file.json] [--rebuild]
+  lua2ts query <file.lua> [--db file.json] [--transitive] [--json]
+
+Defaults:
+  File:      <input>.ts (beside the input file)
+  Directory: <input>ts  (beside the input directory; preserves subdirectories)
 
 Options:
   -o, --output <path>       Output file or directory
@@ -29,6 +37,9 @@ Options:
   --no-runtime              Do not emit lua-runtime.ts in compatible mode
   --report <path>           Write a JSON conversion report
   -h, --help                Show this help
+
+Use lua2ts analyze --help for global-variable and dependency analysis options.
+Use lua2ts query --help to query an existing database without parsing Lua.
 `;
 }
 
@@ -83,7 +94,7 @@ function syntaxDiagnostics(code: string, fileName: string): Diagnostic[] {
 
 function outputFor(input: string, inputRoot: string, outputRoot: string, directoryMode: boolean): string {
   if (!directoryMode) return outputRoot;
-  const relative = path.relative(inputRoot, input).replace(/\.lua$/i, ".ts");
+  const relative = `${path.relative(inputRoot, input)}.ts`;
   return path.join(outputRoot, relative);
 }
 
@@ -110,7 +121,8 @@ function main(): number {
 
   const directoryMode = fs.statSync(input).isDirectory();
   const files = directoryMode ? collectLuaFiles(input) : [input];
-  const outputRoot = path.resolve(options.output ?? (directoryMode ? `${input}-ts` : input.replace(/\.lua$/i, ".ts")));
+  const outputRoot = path.resolve(options.output ?? `${input}${directoryMode ? "ts" : ".ts"}`);
+  if (directoryMode) fs.mkdirSync(outputRoot, { recursive: true });
   const report: Array<Record<string, unknown>> = [];
   let hasErrors = false;
   const runtimeDirectories = new Set<string>();
@@ -158,4 +170,5 @@ function main(): number {
   return hasErrors ? 1 : 0;
 }
 
-process.exitCode = main();
+process.exitCode = process.argv[2] === "analyze" ? runAnalysis(process.argv.slice(3))
+  : process.argv[2] === "query" ? runQuery(process.argv.slice(3)) : main();

@@ -145,8 +145,16 @@ export function convertLua(source: string, options: ConvertOptions): ConvertResu
   function tableExpression(node: Node, context: Context): string {
     stats.tables += 1;
     if (compatible) {
-      const fields = node.fields.map((field: Node) => {
-        if (field.type === "TableValue") return `{ kind: "value", value: ${expression(field.value, context)} }`;
+      const fields = node.fields.map((field: Node, index: number) => {
+        if (field.type === "TableValue") {
+          if (field.value.type === "VarargLiteral") {
+            // Lua expands all varargs only in the last field; other positions take the first value.
+            return index === node.fields.length - 1
+              ? '...luaArgs.map((value) => ({ kind: "value" as const, value }))'
+              : '{ kind: "value", value: luaArgs[0] }';
+          }
+          return `{ kind: "value", value: ${expression(field.value, context)} }`;
+        }
         if (field.type === "TableKeyString") {
           return `{ kind: "key", key: ${JSON.stringify(identifierName(field.key))}, value: ${expression(field.value, context)} }`;
         }
@@ -157,11 +165,20 @@ export function convertLua(source: string, options: ConvertOptions): ConvertResu
 
     const allValues = node.fields.every((field: Node) => field.type === "TableValue");
     if (allValues) {
-      return `[undefined${node.fields.length ? ", " : ""}${node.fields.map((field: Node) => expression(field.value, context)).join(", ")}]`;
+      return `[undefined${node.fields.length ? ", " : ""}${node.fields.map((field: Node, index: number) =>
+        field.value.type === "VarargLiteral" && index !== node.fields.length - 1 ? "luaArgs[0]" : expression(field.value, context)
+      ).join(", ")}]`;
     }
     let implicit = 1;
-    const fields = node.fields.map((field: Node) => {
-      if (field.type === "TableValue") return `${implicit++}: ${expression(field.value, context)}`;
+    const fields = node.fields.map((field: Node, index: number) => {
+      if (field.type === "TableValue") {
+        if (field.value.type === "VarargLiteral") {
+          return index === node.fields.length - 1
+            ? `...Object.fromEntries(luaArgs.map((value, index) => [${implicit} + index, value]))`
+            : `${implicit++}: luaArgs[0]`;
+        }
+        return `${implicit++}: ${expression(field.value, context)}`;
+      }
       if (field.type === "TableKeyString") {
         const key = identifierName(field.key);
         return `${isIdentifier(key) ? key : JSON.stringify(key)}: ${expression(field.value, context)}`;

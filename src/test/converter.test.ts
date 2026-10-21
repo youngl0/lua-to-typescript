@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import ts from "typescript";
+import { runInNewContext } from "node:vm";
 import { convertLua } from "../converter.js";
+import { RUNTIME_SOURCE } from "../runtime-source.js";
 
 function assertValidTypeScript(code: string): void {
   const result = ts.transpileModule(code, {
@@ -70,4 +72,46 @@ setfenv(1, {})
   assertValidTypeScript(result.code);
   assert.match(result.code, /luaUnpack\(values\)/);
   assert.ok(result.diagnostics.some((item) => item.code === "LUA2TS_LUA51_ENVIRONMENT"));
+});
+
+function executeConverted(source: string, mode: "compatible" | "syntax" = "compatible"): any {
+  const result = convertLua(source, { mode });
+  assertValidTypeScript(result.code);
+  const runtime: Record<string, unknown> = {};
+  const compile = (code: string): string => ts.transpileModule(code, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  runInNewContext(compile(RUNTIME_SOURCE), { exports: runtime });
+  const output: Record<string, unknown> = {};
+  runInNewContext(compile(result.code), { exports: output, require: () => runtime });
+  return output.default;
+}
+
+test("compatible vararg tables preserve nil positions, numeric indexes, and empty argument lists", () => {
+  const values = executeConverted('local function capture(...) return {10, ...} end\nreturn capture(20, nil, 40)');
+  assert.equal(values[1], 10);
+  assert.equal(values[2], 20);
+  assert.equal(values[3], undefined);
+  assert.equal(values[4], 40);
+  const empty = executeConverted('local function capture(...) return {...} end\nreturn capture()');
+  assert.equal(Reflect.ownKeys(empty).length, 0);
+});
+
+test("varargs before another field use one value, and mixed keyed tables expand a trailing vararg", () => {
+  for (const mode of ["compatible", "syntax"] as const) {
+    const firstOnly = executeConverted('local function capture(...) return {..., 99, tag = "ok"} end\nreturn capture(10, 20)', mode);
+    assert.equal(firstOnly[1], 10);
+    assert.equal(firstOnly[2], 99);
+    assert.equal(firstOnly[3], undefined);
+    assert.equal(firstOnly.tag, "ok");
+    const trailing = executeConverted('local function capture(...) return {tag = "ok", 5, ...} end\nreturn capture(10, 20)', mode);
+    assert.equal(trailing[1], 5);
+    assert.equal(trailing[2], 10);
+    assert.equal(trailing[3], 20);
+    assert.equal(trailing.tag, "ok");
+    const list = executeConverted('local function capture(...) return {..., 99} end\nreturn capture(10, 20)', mode);
+    assert.equal(list[1], 10);
+    assert.equal(list[2], 99);
+    assert.equal(list[3], undefined);
+  }
 });
