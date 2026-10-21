@@ -2,6 +2,8 @@
 
 Deterministic, offline Lua 5.1 to TypeScript transpiler. Conversion does not call an AI service.
 
+This repository contains the standalone converter, Lua analyzer, dependency query APIs, and their tests and usage documentation. Agent orchestration and project-specific cocos2d-x-to-Creator migration designs are maintained separately from this tool.
+
 ## Install and build
 
 ```powershell
